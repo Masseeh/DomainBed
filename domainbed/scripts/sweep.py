@@ -137,22 +137,23 @@ DATASETS = [d for d in datasets.DATASETS if "Debug" not in d]
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Run a sweep')
-    parser.add_argument('command', choices=['launch', 'delete_incomplete'])
-    parser.add_argument('--datasets', nargs='+', type=str, default=DATASETS)
-    parser.add_argument('--algorithms', nargs='+', type=str, default=algorithms.ALGORITHMS)
+    parser.add_argument('command', choices=['launch', 'delete_incomplete', 'status'])
+    parser.add_argument('--datasets', nargs='+', type=str, default=['PACS'])
+    parser.add_argument('--algorithms', nargs='+', type=str, default=['ST_AT'])
     parser.add_argument('--task', type=str, default="domain_generalization")
     parser.add_argument('--n_hparams_from', type=int, default=0)
-    parser.add_argument('--n_hparams', type=int, default=20)
-    parser.add_argument('--output_dir', type=str, required=True)
-    parser.add_argument('--data_dir', type=str, required=True)
+    parser.add_argument('--n_hparams', type=int, default=5)
+    parser.add_argument('--output_dir', type=str, default="train_output/ST_AT_3_trials")
+    parser.add_argument('--data_dir', type=str, default="/export/livia/home/vision/masih/datasets")
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--n_trials', type=int, default=3)
-    parser.add_argument('--command_launcher', type=str, required=True)
+    parser.add_argument('--command_launcher', type=str, default='local')
     parser.add_argument('--steps', type=int, default=None)
     parser.add_argument('--hparams', type=str, default=None)
     parser.add_argument('--holdout_fraction', type=float, default=0.2)
     parser.add_argument('--single_test_envs', action='store_true')
     parser.add_argument('--skip_confirmation', action='store_true')
+    parser.add_argument('--v', action='store_true')
     args = parser.parse_args()
 
     args_list = make_args_list(
@@ -171,8 +172,10 @@ if __name__ == "__main__":
 
     jobs = [Job(train_args, args.output_dir) for train_args in args_list]
 
-    for job in jobs:
-        print(job)
+    if args.v:
+        for job in jobs:
+            print(job)
+
     print("{} jobs: {} done, {} incomplete, {} not launched.".format(
         len(jobs),
         len([j for j in jobs if j.state == Job.DONE]),
@@ -194,3 +197,6 @@ if __name__ == "__main__":
         if not args.skip_confirmation:
             ask_for_confirmation()
         Job.delete(to_delete)
+    
+    else:
+        pass

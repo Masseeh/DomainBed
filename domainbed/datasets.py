@@ -9,9 +9,6 @@ from torch.utils.data import TensorDataset, Subset
 from torchvision.datasets import MNIST, ImageFolder
 from torchvision.transforms.functional import rotate
 
-from wilds.datasets.camelyon17_dataset import Camelyon17Dataset
-from wilds.datasets.fmow_dataset import FMoWDataset
-
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 DATASETS = [
@@ -47,7 +44,7 @@ def num_environments(dataset_name):
 class MultipleDomainDataset:
     N_STEPS = 5001           # Default, subclasses may override
     CHECKPOINT_FREQ = 100    # Default, subclasses may override
-    N_WORKERS = 8            # Default, subclasses may override
+    N_WORKERS = 3            # Default, subclasses may override
     ENVIRONMENTS = None      # Subclasses should override
     INPUT_SHAPE = None       # Subclasses should override
 
@@ -67,8 +64,8 @@ class Debug(MultipleDomainDataset):
         for _ in [0, 1, 2]:
             self.datasets.append(
                 TensorDataset(
-                    torch.randn(16, *self.INPUT_SHAPE),
-                    torch.randint(0, self.num_classes, (16,))
+                    torch.randn(64, *self.INPUT_SHAPE),
+                    torch.randint(0, self.num_classes, (64,))
                 )
             )
 
@@ -79,6 +76,7 @@ class Debug28(Debug):
 class Debug224(Debug):
     INPUT_SHAPE = (3, 224, 224)
     ENVIRONMENTS = ['0', '1', '2']
+    N_STEPS = 10
 
 
 class MultipleEnvironmentMNIST(MultipleDomainDataset):
@@ -338,20 +336,29 @@ class WILDSDataset(MultipleDomainDataset):
         return sorted(list(set(metadata_vals.view(-1).tolist())))
 
 
-class WILDSCamelyon(WILDSDataset):
-    ENVIRONMENTS = [ "hospital_0", "hospital_1", "hospital_2", "hospital_3",
-            "hospital_4"]
-    def __init__(self, root, test_envs, hparams):
-        dataset = Camelyon17Dataset(root_dir=root)
-        super().__init__(
-            dataset, "hospital", test_envs, hparams['data_augmentation'], hparams)
+try:
+    import wilds
+except ModuleNotFoundError:
+    pass
+else:
+
+    from wilds.datasets.camelyon17_dataset import Camelyon17Dataset
+    from wilds.datasets.fmow_dataset import FMoWDataset    
+
+    class WILDSCamelyon(WILDSDataset):
+        ENVIRONMENTS = [ "hospital_0", "hospital_1", "hospital_2", "hospital_3",
+                "hospital_4"]
+        def __init__(self, root, test_envs, hparams):
+            dataset = Camelyon17Dataset(root_dir=root)
+            super().__init__(
+                dataset, "hospital", test_envs, hparams['data_augmentation'], hparams)
 
 
-class WILDSFMoW(WILDSDataset):
-    ENVIRONMENTS = [ "region_0", "region_1", "region_2", "region_3",
-            "region_4", "region_5"]
-    def __init__(self, root, test_envs, hparams):
-        dataset = FMoWDataset(root_dir=root)
-        super().__init__(
-            dataset, "region", test_envs, hparams['data_augmentation'], hparams)
+    class WILDSFMoW(WILDSDataset):
+        ENVIRONMENTS = [ "region_0", "region_1", "region_2", "region_3",
+                "region_4", "region_5"]
+        def __init__(self, root, test_envs, hparams):
+            dataset = FMoWDataset(root_dir=root)
+            super().__init__(
+                dataset, "region", test_envs, hparams['data_augmentation'], hparams)
 

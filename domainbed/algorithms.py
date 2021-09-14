@@ -11,7 +11,7 @@ import numpy as np
 from collections import defaultdict
 
 from domainbed import networks
-from domainbed.lib.misc import random_pairs_of_minibatches, ParamDict
+from domainbed.lib.misc import pdb, random_pairs_of_minibatches, ParamDict
 
 ALGORITHMS = [
     'ERM',
@@ -33,7 +33,10 @@ ALGORITHMS = [
     'ANDMask',
     'SANDMask',    # SAND-mask
     'IGA',
-    'SelfReg'
+    'SelfReg',
+    'ST',
+    'ST_NST',
+    'ST_AT'
 ]
 
 def get_algorithm_class(algorithm_name):
@@ -101,6 +104,206 @@ class ERM(Algorithm):
 
     def predict(self, x):
         return self.network(x)
+
+class ST(Algorithm):
+    """
+    Student-Teacher Domain Generaliziation
+    """
+
+    def __init__(self, input_shape, num_classes, num_domains, hparams):
+        super().__init__(input_shape, num_classes, num_domains, hparams)
+
+        self.register_buffer('update_count', torch.tensor([0]))
+
+        self.num_domains = num_domains
+
+        self.model_t = self._make_network(input_shape=input_shape, num_classes=num_domains)
+        self.model_s = self._make_network(input_shape=input_shape, num_classes=num_classes)
+
+        self.features_t = []
+        self.features_s = []
+
+        def hook_t(module, input, output):
+            self.features_t.append(output)
+        def hook_s(module, input, output):
+            self.features_s.append(output)
+
+        self.model_t[0].network.layer1[-1].register_forward_hook(hook_t)
+        self.model_t[0].network.layer2[-1].register_forward_hook(hook_t)
+        self.model_t[0].network.layer3[-1].register_forward_hook(hook_t)
+        self.model_t[0].network.layer4[-1].register_forward_hook(hook_t)
+
+        self.model_s[0].network.layer1[-1].register_forward_hook(hook_s)
+        self.model_s[0].network.layer2[-1].register_forward_hook(hook_s)
+        self.model_s[0].network.layer3[-1].register_forward_hook(hook_s)
+        self.model_s[0].network.layer4[-1].register_forward_hook(hook_s)
+
+
+        self.optimizer_t = torch.optim.Adam(
+            self.model_t.parameters(),
+            lr=self.hparams["lr"],
+            weight_decay=self.hparams['weight_decay']
+        )
+
+        self.optimizer_s = torch.optim.Adam(
+            self.model_s.parameters(),
+            lr=self.hparams["lr"],
+            weight_decay=self.hparams['weight_decay']
+        )
+
+    def feature_loss(self, fs_list, ft_list, domain_labels):
+        tot_loss = 0
+        for i in range(len(ft_list)):
+            fs = fs_list[i]
+            ft = ft_list[i].detach()
+            _, _, h, w = fs.shape
+            fs_norm = F.normalize(fs, p=2)
+            # don't propagate the error to the teacher network
+            ft_norm = F.normalize(ft, p=2)
+            f_loss = (0.5/(w*h))*F.mse_loss(fs_norm.detach(), ft_norm, reduction='sum')
+            tot_loss += f_loss
+
+        return tot_loss
+    
+    def _make_network(self, input_shape, num_classes):
+        featurizer = networks.Featurizer(input_shape, self.hparams)
+        classifier = networks.Classifier(
+            featurizer.n_outputs,
+            num_classes,
+            self.hparams['nonlinear_classifier'])
+
+        network = nn.Sequential(featurizer, classifier)
+
+        return network
+
+    def update(self, minibatches, unlabeled=None):
+
+        self.update_count += 1
+
+        self.features_t = []
+        self.features_s = []
+
+        all_x = torch.cat([x for x,y in minibatches])
+        all_y = torch.cat([y for x,y in minibatches])
+
+        domain_labels = torch.cat([
+            torch.full((x.shape[0], ), i, dtype=torch.int64, device=all_x.device)
+            for i, (x, y) in enumerate(minibatches)
+        ])
+
+        if self.update_count <= self.hparams['d_steps']:
+            loss_t = F.cross_entropy(self.model_t(all_x), domain_labels)
+            self.optimizer_t.zero_grad()
+            loss_t.backward()
+            self.optimizer_t.step()
+            loss_t = loss_t.item()
+        else:
+            # forward pass to fill the features_s array
+            loss_t = 0
+            self.model_t.eval()
+            with torch.no_grad():
+                self.model_t(all_x)
+
+
+        loss_s = (1 - self.hparams['alpha']) * F.cross_entropy(self.model_s(all_x), all_y)
+        loss_fl = self.hparams['alpha'] * self.feature_loss(self.features_s, self.features_t, domain_labels)
+
+        self.optimizer_s.zero_grad()
+        (loss_s + loss_fl).backward()
+        self.optimizer_s.step()
+
+        loss = loss_t + loss_s + loss_fl
+
+        return {'loss': loss.item(), 'loss_t': loss_t, 'loss_s': loss_s.item(), 'loss_fl': loss_fl.item()}
+
+    def predict(self, x):
+        return self.model_s(x)
+
+class ST_NST(ST):
+    """
+    Student-Teacher NST Domain Generaliziation from like what you like: knowledge distill via neuron selectivity transfer
+    https://github.com/HobbitLong/RepDistiller/blob/master/distiller_zoo/NST.py
+    """
+
+    def __init__(self, input_shape, num_classes, num_domains, hparams):
+        super().__init__(input_shape, num_classes, num_domains, hparams)
+
+    def poly_kernel(self, a, b):
+        a = a.unsqueeze(1)
+        b = b.unsqueeze(2)
+        res = (a * b).sum(-1).pow(2)
+        return res
+
+    def feature_loss(self, fs_list, ft_list, domain_labels):
+        tot_loss = 0
+        for i in range(len(ft_list)):
+            fs = fs_list[i]
+            # don't propagate the error to the teacher network
+            ft = ft_list[i].detach()
+            b, c, h, w = fs.shape
+
+            fs = F.adaptive_avg_pool2d(fs, (h, w))
+            ft = F.adaptive_avg_pool2d(ft, (h, w))
+
+            fs = fs.view(b, c, -1)
+            fs = F.normalize(fs, dim=2)
+            ft = ft.view(b, c, -1)
+            ft = F.normalize(ft, dim=2)
+
+            f_loss = (self.poly_kernel(ft, ft).mean().detach() + self.poly_kernel(fs, fs).mean()
+                    - 2 * self.poly_kernel(fs, ft).mean())
+
+            tot_loss += f_loss
+
+        return tot_loss
+
+class ST_AT(ST):
+    """
+    Student-Teacher AT Domain Generaliziation from Paying More Attention to Attention: Improving the Performance of Convolutional Neural Networks
+    via Attention Transfer
+    https://github.com/HobbitLong/RepDistiller/blob/master/distiller_zoo/AT.py
+    """
+
+    def __init__(self, input_shape, num_classes, num_domains, hparams):
+        super().__init__(input_shape, num_classes, num_domains, hparams)
+
+        self.p = self.hparams['p']
+        self.margin = 1
+
+    def at(self, f):
+        if self.p == 1:
+            return F.normalize(f.abs().mean(1).view(f.size(0), -1))
+        else:
+            return F.normalize(f.pow(self.p).mean(1).view(f.size(0), -1))
+    
+    def feature_loss(self, fs_list, ft_list, domain_labels):
+
+        tot_loss = []
+
+        for i in range(self.num_domains):
+            idx = (domain_labels == i).nonzero()
+
+            for j in range(len(ft_list)):
+
+                if self.hparams['beta'][j] == 0:
+                    continue
+
+                fs = fs_list[i][idx]
+                # don't propagate the error to the teacher network
+                ft = ft_list[i][idx].detach()   
+
+                fs = self.at(fs)
+                ft = self.at(ft)
+
+                b,c = fs.shape
+
+                dist = torch.norm(fs[:,None] - ft, p=self.p, dim=-1, keepdim=True)
+                f_loss = F.relu(self.margin - dist).sum()
+                f_loss /= (b * (b - 1) * c / 2)
+
+                tot_loss.append(self.hparams['beta'][i]*f_loss)
+
+        return torch.tensor(tot_loss).mean()
 
 
 class Fish(Algorithm):

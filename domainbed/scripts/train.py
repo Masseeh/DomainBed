@@ -23,7 +23,7 @@ from domainbed.lib.fast_data_loader import InfiniteDataLoader, FastDataLoader
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Domain generalization')
-    parser.add_argument('--data_dir', type=str)
+    parser.add_argument('--data_dir', type=str, default="/export/livia/home/vision/masih/datasets")
     parser.add_argument('--dataset', type=str, default="RotatedMNIST")
     parser.add_argument('--algorithm', type=str, default="ERM")
     parser.add_argument('--task', type=str, default="domain_generalization",
@@ -37,6 +37,8 @@ if __name__ == "__main__":
         'random_hparams).')
     parser.add_argument('--seed', type=int, default=0,
         help='Seed for everything else')
+    parser.add_argument('--device', type=str, default='0',
+        help='cuda device number')
     parser.add_argument('--steps', type=int, default=None,
         help='Number of steps. Default is dataset-dependent.')
     parser.add_argument('--checkpoint_freq', type=int, default=None,
@@ -46,7 +48,7 @@ if __name__ == "__main__":
     parser.add_argument('--holdout_fraction', type=float, default=0.2)
     parser.add_argument('--uda_holdout_fraction', type=float, default=0,
         help="For domain adaptation, % of test to use unlabeled for training.")
-    parser.add_argument('--skip_model_save', action='store_true')
+    parser.add_argument('--model_save', action='store_true')
     parser.add_argument('--save_model_every_checkpoint', action='store_true')
     args = parser.parse_args()
 
@@ -91,7 +93,7 @@ if __name__ == "__main__":
     torch.backends.cudnn.benchmark = False
 
     if torch.cuda.is_available():
-        device = "cuda"
+        device = f"cuda:{args.device}"
     else:
         device = "cpu"
 
@@ -191,7 +193,7 @@ if __name__ == "__main__":
     checkpoint_freq = args.checkpoint_freq or dataset.CHECKPOINT_FREQ
 
     def save_checkpoint(filename):
-        if args.skip_model_save:
+        if not args.model_save:
             return
         save_dict = {
             "args": vars(args),

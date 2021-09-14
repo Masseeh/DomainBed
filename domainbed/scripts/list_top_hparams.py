@@ -111,8 +111,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Domain generalization testbed")
     parser.add_argument("--input_dir", required=True)
-    parser.add_argument('--dataset', required=True)
-    parser.add_argument('--algorithm', required=True)
+    parser.add_argument('--dataset', default='PACS')
+    parser.add_argument('--algorithm', default='ST_AT')
     parser.add_argument('--test_env', type=int, required=True)
     args = parser.parse_args()
 

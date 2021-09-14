@@ -29,7 +29,7 @@ def _hparams(algorithm, dataset, random_seed):
     # Unconditional hparam definitions.
 
     _hparam('data_augmentation', True, lambda r: True)
-    _hparam('resnet18', False, lambda r: False)
+    _hparam('resnet18', True, lambda r: True)
     _hparam('resnet_dropout', 0., lambda r: r.choice([0., 0.1, 0.5]))
     _hparam('class_balanced', False, lambda r: False)
     # TODO: nonlinear classifiers disabled
@@ -48,6 +48,22 @@ def _hparams(algorithm, dataset, random_seed):
         _hparam('mlp_width', 256, lambda r: int(2 ** r.uniform(6, 10)))
         _hparam('mlp_depth', 3, lambda r: int(r.choice([3, 4, 5])))
         _hparam('mlp_dropout', 0., lambda r: r.choice([0., 0.1, 0.5]))
+
+    elif algorithm.startswith('ST'):
+        _hparam('d_steps', 2101, lambda r: 2101)
+
+        if algorithm == 'ST_AT':
+            _hparam('alpha', 0.25, lambda r: 10**r.uniform(-2, 0))
+            _hparam('p', 2, lambda r: int(r.choice([1, 2, 3])))
+
+            betas = [[1., 1., 1., 1.], [0., 1., 1., 1.], [0., 0., 1., 1.],[0., 0., 0., 1.]]
+            _hparam('beta', betas[0], lambda r: betas[r.choice([0, 1, 2, 3])])
+
+        elif algorithm == 'ST_NST':
+            _hparam('alpha', 5., lambda r: 50.)
+        
+        else:
+            _hparam('alpha', 0.02, lambda r: 0.02)
 
     elif algorithm == 'Fish':
         _hparam('meta_lr', 0.5, lambda r:r.choice([0.05, 0.1, 0.5]))
